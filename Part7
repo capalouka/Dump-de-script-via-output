@@ -21542,3 +21542,1138 @@ end
 
 --- Load
 LoadRecent(1)
+ 04:54:13.789  ----- [2412] ServerScriptService.Scripts.Core.SoftShutdown.src.node_modules.@quenty.attributeutils.node_modules.@quenty.loader.Queue -----  -  Editar
+  04:54:13.789  --[=[
+	Private queue class for loading system.
+
+	@private
+	@class Queue
+]=]
+
+local Queue = {}
+Queue.ClassName = "Queue"
+Queue.__index = Queue
+
+--[=[
+	Constructs a new queue
+	@return Queue<T>
+]=]
+function Queue.new()
+	return setmetatable({
+		_first = 0;
+		_last = -1;
+	}, Queue)
+end
+
+--[=[
+	Pushes an entry to the left of the queue
+	@param value T
+]=]
+function Queue:PushLeft(value)
+	self._first = self._first - 1
+	self[self._first] = value
+end
+
+--[=[
+	Pushes an entry to the right of the queue
+	@param value T
+]=]
+function Queue:PushRight(value)
+	self._last = self._last + 1
+	self[self._last] = value
+end
+
+--[=[
+	Pops an entry from the left of the queue
+	@return T
+]=]
+function Queue:PopLeft()
+	if self._first > self._last then
+		error("Queue is empty")
+	end
+
+	local value = self[self._first]
+	self[self._first] = nil
+	self._first = self._first + 1
+
+	return value
+end
+
+--[=[
+	Pops an entry from the right of the queue
+	@return T
+]=]
+function Queue:PopRight()
+	if self._first > self._last then
+		error("Queue is empty")
+	end
+
+	local value = self[self._last]
+	self[self._last] = nil
+	self._last = self._last - 1
+
+	return value
+end
+
+--[=[
+	Returns true if the queue is empty
+	@return boolean
+]=]
+function Queue:IsEmpty()
+	return self._first > self._last
+end
+
+return Queue
+  -  Editar
+  04:54:13.789    -  Editar
+  04:54:13.789  ----- [2413] ServerScriptService.Scripts.Core.SoftShutdown.src.node_modules.@quenty.attributeutils.node_modules.@quenty.loader.ScriptInfoUtils -----  -  Editar
+  04:54:13.789  --[=[
+	@private
+	@class ScriptInfoUtils
+]=]
+
+local CollectionService = game:GetService("CollectionService")
+
+local loader = script.Parent
+local Utils = require(script.Parent.Utils)
+local BounceTemplateUtils = require(script.Parent.BounceTemplateUtils)
+
+local ScriptInfoUtils = {}
+
+ScriptInfoUtils.DEPENDENCY_FOLDER_NAME = "node_modules";
+ScriptInfoUtils.ModuleReplicationTypes = Utils.readonly({
+	CLIENT = "client";
+	SERVER = "server";
+	SHARED = "shared";
+	IGNORE = "ignore";
+	PLUGIN = "plugin";
+})
+
+function ScriptInfoUtils.createScriptInfo(instance, name, replicationMode)
+	assert(typeof(instance) == "Instance", "Bad instance")
+	assert(type(name) == "string", "Bad name")
+	assert(type(replicationMode) == "string", "Bad replicationMode")
+
+	return Utils.readonly({
+		name = name;
+		replicationMode = replicationMode;
+		instance = instance;
+	})
+end
+
+function ScriptInfoUtils.createScriptInfoLookup()
+	-- Server/client also contain shared entries
+	return Utils.readonly({
+		[ScriptInfoUtils.ModuleReplicationTypes.SERVER] = {}; -- [string name] = scriptInfo
+		[ScriptInfoUtils.ModuleReplicationTypes.CLIENT] = {};
+		[ScriptInfoUtils.ModuleReplicationTypes.SHARED] = {};
+		[ScriptInfoUtils.ModuleReplicationTypes.PLUGIN] = {};
+	})
+end
+
+function ScriptInfoUtils.getScriptInfoLookupForMode(scriptInfoLookup, replicationMode)
+	assert(type(scriptInfoLookup) == "table", "Bad scriptInfoLookup")
+	assert(type(replicationMode) == "string", "Bad replicationMode")
+
+	return scriptInfoLookup[replicationMode]
+end
+
+function ScriptInfoUtils.populateScriptInfoLookup(instance, scriptInfoLookup, lastReplicationMode)
+	assert(typeof(instance) == "Instance", "Bad instance")
+	assert(type(scriptInfoLookup) == "table", "Bad scriptInfoLookup")
+	assert(type(lastReplicationMode) == "string", "Bad lastReplicationMode")
+
+	if instance:IsA("Folder") then
+		local replicationMode = ScriptInfoUtils.getFolderReplicationMode(instance.Name, lastReplicationMode)
+		if replicationMode ~= ScriptInfoUtils.ModuleReplicationTypes.IGNORE then
+			for _, item in pairs(instance:GetChildren()) do
+				if not BounceTemplateUtils.isBounceTemplate(item) then
+					if item:IsA("Folder") then
+						ScriptInfoUtils.populateScriptInfoLookup(item, scriptInfoLookup, replicationMode)
+					elseif item:IsA("ModuleScript") then
+						ScriptInfoUtils.addToInfoMap(scriptInfoLookup,
+							ScriptInfoUtils.createScriptInfo(item, item.Name, replicationMode))
+					end
+				end
+			end
+		end
+	elseif instance:IsA("ModuleScript") then
+		if not BounceTemplateUtils.isBounceTemplate(instance) then
+			if instance == loader then
+				-- STRICT hack to support this module script as "loader" over "Nevermore" in replicated scenario
+				ScriptInfoUtils.addToInfoMap(scriptInfoLookup,
+					ScriptInfoUtils.createScriptInfo(instance, "loader", lastReplicationMode))
+			else
+				ScriptInfoUtils.addToInfoMap(scriptInfoLookup,
+					ScriptInfoUtils.createScriptInfo(instance, instance.Name, lastReplicationMode))
+			end
+		end
+	elseif instance:IsA("ObjectValue") then
+		error("ObjectValue links are not supported at this time for retrieving inline module scripts")
+	end
+end
+
+local AVAILABLE_IN_SHARED = {
+	["HoldingBindersServer"] = true;
+	["HoldingBindersClient"] = true;
+	["IKService"] = true;
+	["IKServiceClient"] = true;
+}
+
+function ScriptInfoUtils.isAvailableInShared(scriptInfo)
+	if CollectionService:HasTag(scriptInfo.instance, "LinkToShared") then
+		return true
+	end
+
+	-- Hack because we can't tag things in Rojo yet
+	return AVAILABLE_IN_SHARED[scriptInfo.name]
+end
+
+function ScriptInfoUtils.addToInfoMap(scriptInfoLookup, scriptInfo)
+	assert(type(scriptInfoLookup) == "table", "Bad scriptInfoLookup")
+	assert(type(scriptInfo) == "table", "Bad scriptInfo")
+
+	local replicationMode = assert(scriptInfo.replicationMode, "Bad replicationMode")
+	local replicationMap = assert(scriptInfoLookup[replicationMode], "Bad replicationMode")
+
+	ScriptInfoUtils.addToInfoMapForMode(replicationMap, scriptInfo)
+
+	if replicationMode == ScriptInfoUtils.ModuleReplicationTypes.SHARED then
+		ScriptInfoUtils.addToInfoMapForMode(
+			scriptInfoLookup[ScriptInfoUtils.ModuleReplicationTypes.SERVER], scriptInfo)
+		ScriptInfoUtils.addToInfoMapForMode(
+			scriptInfoLookup[ScriptInfoUtils.ModuleReplicationTypes.CLIENT], scriptInfo)
+	elseif ScriptInfoUtils.isAvailableInShared(scriptInfo) then
+		ScriptInfoUtils.addToInfoMapForMode(
+			scriptInfoLookup[ScriptInfoUtils.ModuleReplicationTypes.SHARED], scriptInfo)
+	end
+end
+
+function ScriptInfoUtils.addToInfoMapForMode(replicationMap, scriptInfo)
+	if replicationMap[scriptInfo.name] then
+		warn(("Duplicate module %q in same package under same replication scope. Only using first one. \n- %q\n- %q")
+			:format(scriptInfo.name,
+				scriptInfo.instance:GetFullName(),
+				replicationMap[scriptInfo.name].instance:GetFullName()))
+		return
+	end
+
+	replicationMap[scriptInfo.name] = scriptInfo
+end
+
+function ScriptInfoUtils.getFolderReplicationMode(folderName, lastReplicationMode)
+	assert(type(folderName) == "string", "Bad folderName")
+	assert(type(lastReplicationMode) == "string", "Bad lastReplicationMode")
+
+	--Plugin always replicates further
+	if folderName == ScriptInfoUtils.DEPENDENCY_FOLDER_NAME then
+		return ScriptInfoUtils.ModuleReplicationTypes.IGNORE
+	elseif lastReplicationMode == ScriptInfoUtils.ModuleReplicationTypes.PLUGIN then
+		return lastReplicationMode
+	elseif folderName == "Shared" then
+		return ScriptInfoUtils.ModuleReplicationTypes.SHARED
+	elseif folderName == "Client" then
+		return ScriptInfoUtils.ModuleReplicationTypes.CLIENT
+	elseif folderName == "Server" then
+		return ScriptInfoUtils.ModuleReplicationTypes.SERVER
+	else
+		return lastReplicationMode
+	end
+end
+
+return ScriptInfoUtils  -  Editar
+  04:54:13.789    -  Editar
+  04:54:13.789  ----- [2414] ServerScriptService.Scripts.Core.SoftShutdown.src.node_modules.@quenty.attributeutils.node_modules.@quenty.loader.StaticLegacyLoader -----  -  Editar
+  04:54:13.789  --[=[
+	@private
+	@class StaticLegacyLoader
+]=]
+
+local loader = script.Parent
+local ScriptInfoUtils = require(script.Parent.ScriptInfoUtils)
+local LoaderUtils = require(script.Parent.LoaderUtils)
+local BounceTemplateUtils = require(script.Parent.BounceTemplateUtils)
+
+local StaticLegacyLoader = {}
+StaticLegacyLoader.ClassName = "StaticLegacyLoader"
+StaticLegacyLoader.__index = StaticLegacyLoader
+
+function StaticLegacyLoader.new()
+	local self = setmetatable({
+		_packageLookups = {};
+	}, StaticLegacyLoader)
+
+	return self
+end
+
+function StaticLegacyLoader:__call(value)
+	return self:Require(value)
+end
+
+function StaticLegacyLoader:Lock()
+	error("Cannot start loader while not running")
+end
+
+function StaticLegacyLoader:Require(root, value)
+	if type(value) == "number" then
+		return require(value)
+	elseif type(value) == "string" then
+		-- use very slow module recovery mechanism
+		local module = self:_findModule(root, value)
+		if module then
+			self:_ensureFakeLoader(module)
+			return require(module)
+		else
+			error("Error: Library '" .. tostring(value) .. "' does not exist.", 2)
+		end
+	elseif typeof(value) == "Instance" and value:IsA("ModuleScript") then
+		return require(value)
+	else
+		error(("Error: module must be a string or ModuleScript, got '%s' for '%s'")
+			:format(typeof(value), tostring(value)))
+	end
+end
+
+function StaticLegacyLoader:_findModule(root, name)
+	assert(typeof(root) == "Instance", "Bad root")
+	assert(type(name) == "string", "Bad name")
+
+	-- Implement the node_modules recursive find algorithm
+	local packageRoot = self:_findPackageRoot(root)
+	while packageRoot do
+		-- Build lookup
+		local highLevelLookup = self:_getOrCreateLookup(packageRoot)
+		if highLevelLookup[name] then
+			return highLevelLookup[name]
+		end
+
+		-- Ok, search our package dependencies
+		local dependencies = packageRoot:FindFirstChild(ScriptInfoUtils.DEPENDENCY_FOLDER_NAME)
+		if dependencies then
+			for _, instance in pairs(dependencies:GetChildren()) do
+				if instance:IsA("Folder") and instance.Name:sub(1, 1) == "@" then
+					for _, child in pairs(instance:GetChildren()) do
+						local lookup = self:_getPackageFolderLookup(child)
+						if lookup[name] then
+							return lookup[name]
+						end
+					end
+				else
+					local lookup = self:_getPackageFolderLookup(instance)
+					if lookup[name] then
+						return lookup[name]
+					end
+				end
+			end
+		end
+
+		-- We failed to find anything... search up a level...
+		packageRoot = self:_findPackageRoot(packageRoot)
+	end
+
+	return nil
+end
+
+function StaticLegacyLoader:GetLoader(moduleScript)
+	assert(typeof(moduleScript) == "Instance", "Bad moduleScript")
+
+	return setmetatable({}, {
+		__call = function(_self, value)
+			return self:Require(moduleScript, value)
+		end;
+		__index = function(_self, key)
+			return self:Require(moduleScript, key)
+		end;
+	})
+end
+
+function StaticLegacyLoader:_getPackageFolderLookup(instance)
+	if instance:IsA("ObjectValue") then
+		if instance.Value then
+			return self:_getOrCreateLookup(instance.Value)
+		else
+			warn("[StaticLegacyLoader] - Bad link in packageFolder")
+			return {}
+		end
+	elseif instance:IsA("Folder") then
+		return self:_getOrCreateLookup(instance)
+	elseif instance:IsA("ModuleScript") then
+		return self:_getOrCreateLookup(instance)
+	else
+		warn(("Unknown instance %q (%s) in dependencyFolder - %q")
+			:format(instance.Name, instance.ClassName, instance:GetFullName()))
+		return {}
+	end
+end
+
+function StaticLegacyLoader:_getOrCreateLookup(packageFolderOrModuleScript)
+	assert(typeof(packageFolderOrModuleScript) == "Instance", "Bad packageFolderOrModuleScript")
+
+	if self._packageLookups[packageFolderOrModuleScript] then
+		return self._packageLookups[packageFolderOrModuleScript]
+	end
+
+	local lookup = {}
+
+	self:_buildLookup(lookup, packageFolderOrModuleScript)
+
+	self._packageLookups[packageFolderOrModuleScript] = lookup
+	return lookup
+end
+
+function StaticLegacyLoader:_buildLookup(lookup, instance)
+	if instance:IsA("Folder") then
+		if instance.Name ~= ScriptInfoUtils.DEPENDENCY_FOLDER_NAME then
+			for _, item in pairs(instance:GetChildren()) do
+				self:_buildLookup(lookup, item)
+			end
+		end
+	elseif instance:IsA("ModuleScript") then
+		lookup[instance.Name] = instance
+	end
+end
+
+function StaticLegacyLoader:_findPackageRoot(instance)
+	assert(typeof(instance) == "Instance", "Bad instance")
+
+	local current = instance.Parent
+
+	while current and current ~= game do
+		if LoaderUtils.isPackage(current) then
+			return current
+		else
+			current = current.Parent
+		end
+	end
+
+	return nil
+end
+
+function StaticLegacyLoader:_ensureFakeLoader(module)
+	assert(typeof(module) == "Instance", "Bad module")
+
+	local parent = module.Parent
+	if not parent then
+		warn("[StaticLegacyLoader] - No parent")
+		return
+	end
+
+	-- NexusUnitTest
+	-- luacheck: ignore
+	-- selene: allow(undefined_variable)
+	local shouldBeArchivable = Load and true or false
+
+	-- Already have link
+	local found = parent:FindFirstChild("loader")
+	if found then
+		if BounceTemplateUtils.isBounceTemplate(found) then
+			found.Archivable = shouldBeArchivable
+		end
+
+		return
+	end
+
+	local link = BounceTemplateUtils.create(loader, "loader")
+	link.Archivable = shouldBeArchivable
+	link.Parent = parent
+end
+
+return StaticLegacyLoader  -  Editar
+  04:54:13.789    -  Editar
+  04:54:13.789  ----- [2415] ServerScriptService.Scripts.Core.SoftShutdown.src.node_modules.@quenty.attributeutils.node_modules.@quenty.loader.Utils -----  -  Editar
+  04:54:13.789  --[=[
+	@private
+	@class Utils
+]=]
+
+local Utils = {}
+
+local function errorOnIndex(_, index)
+	error(("Bad index %q"):format(tostring(index)), 2)
+end
+
+local READ_ONLY_METATABLE = {
+	__index = errorOnIndex;
+	__newindex = errorOnIndex;
+}
+
+function Utils.readonly(_table)
+	return setmetatable(_table, READ_ONLY_METATABLE)
+end
+
+function Utils.copyTable(target)
+	local new = {}
+	for key, value in pairs(target) do
+		new[key] = value
+	end
+	return new
+end
+
+function Utils.count(_table)
+	local count = 0
+	for _, _ in pairs(_table) do
+		count = count + 1
+	end
+	return count
+end
+
+function Utils.getOrCreateValue(parent, instanceType, name, defaultValue)
+	assert(typeof(parent) == "Instance", "Bad argument 'parent'")
+	assert(type(instanceType) == "string", "Bad argument 'instanceType'")
+	assert(type(name) == "string", "Bad argument 'name'")
+
+	local foundChild = parent:FindFirstChild(name)
+	if foundChild then
+		if not foundChild:IsA(instanceType) then
+			warn(("[Utils.getOrCreateValue] - Value of type %q of name %q is of type %q in %s instead")
+				:format(instanceType, name, foundChild.ClassName, foundChild:GetFullName()))
+		end
+
+		return foundChild
+	else
+		local newChild = Instance.new(instanceType)
+		newChild.Name = name
+		newChild.Value = defaultValue
+		newChild.Parent = parent
+
+		return newChild
+	end
+end
+
+function Utils.getValue(parent, instanceType, name, default)
+	assert(typeof(parent) == "Instance", "Bad argument 'parent'")
+	assert(type(instanceType) == "string", "Bad argument 'instanceType'")
+	assert(type(name) == "string", "Bad argument 'name'")
+
+	local foundChild = parent:FindFirstChild(name)
+	if foundChild then
+		if foundChild:IsA(instanceType) then
+			return foundChild.Value
+		else
+			warn(("[Utils.getValue] - Value of type %q of name %q is of type %q in %s instead")
+				:format(instanceType, name, foundChild.ClassName, foundChild:GetFullName()))
+			return nil
+		end
+	else
+		return default
+	end
+end
+
+function Utils.setValue(parent, instanceType, name, value)
+	assert(typeof(parent) == "Instance", "Bad argument 'parent'")
+	assert(type(instanceType) == "string", "Bad argument 'instanceType'")
+	assert(type(name) == "string", "Bad argument 'name'")
+
+	local foundChild = parent:FindFirstChild(name)
+	if foundChild then
+		if not foundChild:IsA(instanceType) then
+			warn(("[Utils.setValue] - Value of type %q of name %q is of type %q in %s instead")
+				:format(instanceType, name, foundChild.ClassName, foundChild:GetFullName()))
+		end
+
+		foundChild.Value = value
+	else
+		local newChild = Instance.new(instanceType)
+		newChild.Name = name
+		newChild.Value = value
+		newChild.Parent = parent
+	end
+end
+
+
+function Utils.getOrCreateFolder(parent, folderName)
+	local found = parent:FindFirstChild(folderName)
+	if found then
+		return found
+	else
+		local folder = Instance.new("Folder")
+		folder.Name = folderName
+		folder.Parent = parent
+		return folder
+	end
+end
+
+
+return Utils
+  -  Editar
+  04:54:13.789    -  Editar
+  04:54:13.790  ----- [2416] ServerScriptService.Scripts.Core.SoftShutdown.src.node_modules.@quenty.attributeutils.node_modules.@quenty.maid.Shared.Maid -----  -  Editar
+  04:54:13.790  --[=[
+	Manages the cleaning of events and other things. Useful for
+	encapsulating state and make deconstructors easy.
+
+	See the [Five Powerful Code Patterns talk](https://developer.roblox.com/en-us/videos/5-powerful-code-patterns-behind-top-roblox-games)
+	for a more in-depth look at Maids in top games.
+
+	```lua
+	local maid = Maid.new()
+
+	maid:GiveTask(function()
+		print("Cleaning up")
+	end)
+
+	maid:GiveTask(workspace.ChildAdded:Connect(print))
+
+	-- Disconnects all events, and executes all functions
+	maid:DoCleaning()
+	```
+
+	@class Maid
+]=]
+-- luacheck: pop
+
+local Maid = {}
+Maid.ClassName = "Maid"
+
+--[=[
+	Constructs a new Maid object
+
+	```lua
+	local maid = Maid.new()
+	```
+
+	@return Maid
+]=]
+function Maid.new()
+	return setmetatable({
+		_tasks = {}
+	}, Maid)
+end
+
+--[=[
+	Returns true if the class is a maid, and false otherwise.
+
+	```lua
+	print(Maid.isMaid(Maid.new())) --> true
+	print(Maid.isMaid(nil)) --> false
+	```
+
+	@param value any
+	@return boolean
+]=]
+function Maid.isMaid(value)
+	return type(value) == "table" and value.ClassName == "Maid"
+end
+
+--[=[
+	Returns Maid[key] if not part of Maid metatable
+
+	```lua
+	local maid = Maid.new()
+	maid._current = Instance.new("Part")
+	print(maid._current) --> Part
+
+	maid._current = nil
+	print(maid._current) --> nil
+	```
+
+	@param index any
+	@return MaidTask
+]=]
+function Maid:__index(index)
+	if Maid[index] then
+		return Maid[index]
+	else
+		return self._tasks[index]
+	end
+end
+
+--[=[
+	Add a task to clean up. Tasks given to a maid will be cleaned when
+	maid[index] is set to a different value.
+
+	Task cleanup is such that if the task is an event, it is disconnected.
+	If it is an object, it is destroyed.
+
+	```
+	Maid[key] = (function)         Adds a task to perform
+	Maid[key] = (event connection) Manages an event connection
+	Maid[key] = (Maid)             Maids can act as an event connection, allowing a Maid to have other maids to clean up.
+	Maid[key] = (Object)           Maids can cleanup objects with a `Destroy` method
+	Maid[key] = nil                Removes a named task.
+	```
+
+	@param index any
+	@param newTask MaidTask
+]=]
+function Maid:__newindex(index, newTask)
+	if Maid[index] ~= nil then
+		error(("Cannot use '%s' as a Maid key"):format(tostring(index)), 2)
+	end
+
+	local tasks = self._tasks
+	local oldTask = tasks[index]
+
+	if oldTask == newTask then
+		return
+	end
+
+	tasks[index] = newTask
+
+	if oldTask then
+		if type(oldTask) == "function" then
+			oldTask()
+		elseif typeof(oldTask) == "RBXScriptConnection" then
+			oldTask:Disconnect()
+		elseif oldTask.Destroy then
+			oldTask:Destroy()
+		end
+	end
+end
+
+--[=[
+	Gives a task to the maid for cleanup, but uses an incremented number as a key.
+
+	@param task MaidTask -- An item to clean
+	@return number -- taskId
+]=]
+function Maid:GiveTask(task)
+	if not task then
+		error("Task cannot be false or nil", 2)
+	end
+
+	local taskId = #self._tasks+1
+	self[taskId] = task
+
+	if type(task) == "table" and (not task.Destroy) then
+		warn("[Maid.GiveTask] - Gave table task without .Destroy\n\n" .. debug.traceback())
+	end
+
+	return taskId
+end
+
+--[=[
+	Gives a promise to the maid for clean.
+
+	@param promise Promise<T>
+	@return Promise<T>
+]=]
+function Maid:GivePromise(promise)
+	if not promise:IsPending() then
+		return promise
+	end
+
+	local newPromise = promise.resolved(promise)
+	local id = self:GiveTask(newPromise)
+
+	-- Ensure GC
+	newPromise:Finally(function()
+		self[id] = nil
+	end)
+
+	return newPromise
+end
+
+--[=[
+	Cleans up all tasks and removes them as entries from the Maid.
+
+	:::note
+	Signals that are already connected are always disconnected first. After that
+	any signals added during a cleaning phase will be disconnected at random times.
+	:::
+
+	:::tip
+	DoCleaning() may be recursively invoked. This allows the you to ensure that
+	tasks or other tasks. Each task will be executed once.
+
+	However, adding tasks while cleaning is not generally a good idea, as if you add a
+	function that adds itself, this will loop indefinitely.
+	:::
+]=]
+function Maid:DoCleaning()
+	local tasks = self._tasks
+
+	-- Disconnect all events first as we know this is safe
+	for index, job in pairs(tasks) do
+		if typeof(job) == "RBXScriptConnection" then
+			tasks[index] = nil
+			job:Disconnect()
+		end
+	end
+
+	-- Clear out tasks table completely, even if clean up tasks add more tasks to the maid
+	local index, job = next(tasks)
+	while job ~= nil do
+		tasks[index] = nil
+		if type(job) == "function" then
+			job()
+		elseif typeof(job) == "RBXScriptConnection" then
+			job:Disconnect()
+		elseif job.Destroy then
+			job:Destroy()
+		end
+		index, job = next(tasks)
+	end
+end
+
+--[=[
+	Alias for [Maid.DoCleaning()](/api/Maid#DoCleaning)
+
+	@function Destroy
+	@within Maid
+]=]
+Maid.Destroy = Maid.DoCleaning
+
+return Maid
+  -  Editar
+  04:54:13.790    -  Editar
+  04:54:13.790  ----- [2417] ServerScriptService.Scripts.Core.SoftShutdown.src.node_modules.@quenty.attributeutils.node_modules.@quenty.maid.Shared.MaidTaskUtils -----  -  Editar
+  04:54:13.790  --[=[
+	Utility methods involving maids and tasks.
+	@class MaidTaskUtils
+]=]
+
+--[=[
+	An object that can have the method :Destroy() called on it
+	@type Destructable Instance | { Destroy: function }
+	@within MaidTaskUtils
+]=]
+
+--[=[
+	An object that can be cleaned up
+	@type MaidTask function | Destructable | RBXScriptConnection
+	@within MaidTaskUtils
+]=]
+local MaidTaskUtils = {}
+
+--[=[
+	Returns whether a task is a valid job.
+
+	@param job any
+	@return boolean
+]=]
+function MaidTaskUtils.isValidTask(job)
+	return type(job) == "function"
+		or typeof(job) == "RBXScriptConnection"
+		or type(job) == "table" and type(job.Destroy) == "function"
+		or typeof(job) == "Instance"
+end
+
+--[=[
+	Executes the task as requested.
+
+	@param job MaidTask -- Task to execute
+]=]
+function MaidTaskUtils.doTask(job)
+	if type(job) == "function" then
+		job()
+	elseif typeof(job) == "RBXScriptConnection" then
+		job:Disconnect()
+	elseif type(job) == "table" and type(job.Destroy) == "function" then
+		job:Destroy()
+	-- selene: allow(if_same_then_else)
+	elseif typeof(job) == "Instance" then
+		job:Destroy()
+	else
+		error("Bad job")
+	end
+end
+
+--[=[
+	Executes the task delayed after some time.
+
+	```lua
+	-- delays cleanup by 5 seconds
+	maid:GiveTask(MaidTaskUtils.delayed(5, gui))
+	```
+
+	@param time number -- Time in seconds
+	@param job MaidTask -- Job to delay execution
+	@return () -> () -- function that will execute the job delayed
+]=]
+function MaidTaskUtils.delayed(time, job)
+	assert(type(time) == "number", "Bad time")
+	assert(MaidTaskUtils.isValidTask(job), "Bad job")
+
+	return function()
+		task.delay(time, function()
+			MaidTaskUtils.doTask(job)
+		end)
+	end
+end
+
+return MaidTaskUtils  -  Editar
+  04:54:13.790    -  Editar
+  04:54:13.790  ----- [2418] ServerScriptService.Scripts.Core.SoftShutdown.src.node_modules.@quenty.attributeutils.node_modules.@quenty.rx.Shared.Observable -----  -  Editar
+  04:54:13.790  --[=[
+	Observables are like an [signal](/api/Signal], except they do not execute code
+	until the observable is subscribed to. This follows the standard
+	Rx API surface for an observable.
+
+	Observables use a [Subscription](/api/Subscription) to emit values.
+
+	```lua
+	-- Constucts an observable which will emit a, b, c via a subscription
+	local observable = Observable.new(function(sub)
+		print("Connected")
+		sub:Fire("a")
+		sub:Fire("b")
+		sub:Fire("c")
+		sub:Complete() -- ends stream
+	end)
+
+	local sub1 = observable:Subscribe() --> Connected
+	local sub2 = observable:Subscribe() --> Connected
+	local sub3 = observable:Subscribe() --> Connected
+
+	sub1:Destroy()
+	sub2:Destroy()
+	sub3:Destroy()
+	```
+
+	Note that emitted values may be observed like this
+
+	```lua
+	observable:Subscribe(function(value)
+		print("Got ", value)
+	end)
+
+	--> Got a
+	--> Got b
+	--> Got c
+	```
+
+	Note that also, observables return a [MaidTask](/api/MaidTask) which
+	should be used to clean up the resulting subscription.
+
+	```lua
+	maid:GiveTask(observable:Subscribe(function(value)
+		-- do work here!
+	end))
+	```
+
+	Observables over signals are nice because observables may be chained and manipulated
+	via the Pipe operation.
+
+	:::tip
+	You should always clean up the subscription using a [Maid](/api/Maid), otherwise
+	you may memory leak.
+	:::
+	@class Observable
+]=]
+
+local require = require(script.Parent.loader).load(script)
+
+local Subscription = require("Subscription")
+
+local ENABLE_STACK_TRACING = false
+
+local Observable = {}
+Observable.ClassName = "Observable"
+Observable.__index = Observable
+
+--[=[
+	Returns whether or not a value is an observable.
+	@param item any
+	@return boolean
+]=]
+function Observable.isObservable(item)
+	return type(item) == "table" and item.ClassName == "Observable"
+end
+
+--[=[
+	Constructs a new Observable
+
+	```lua
+	local function observeAllChildren(parent)
+		return Observable.new(function(sub)
+			local maid = Maid.new()
+
+			for _, item in pairs(parent:GetChildren()) do
+				sub:Fire(item)
+			end
+			maid:GiveTask(parent.ChildAdded:Connect(function(child)
+				sub:Fire(child)
+			end))
+
+			return maid
+		end)
+	end
+
+	-- Prints out all current children, and whenever a new
+	-- child is added to workspace
+	local maid = Maid.new()
+	maid:GiveTask(observeAllChildren(workspace):Subscribe(print))
+	```
+
+	@param onSubscribe (subscription: Subscription<T>) -> MaidTask
+	@return Observable<T>
+]=]
+function Observable.new(onSubscribe)
+	assert(type(onSubscribe) == "function", "Bad onSubscribe")
+
+	return setmetatable({
+		_source = ENABLE_STACK_TRACING and debug.traceback() or "";
+		_onSubscribe = onSubscribe;
+	}, Observable)
+end
+
+--[=[
+	Transforms the observable with the following transformers
+
+	```lua
+	Rx.of(1, 2, 3):Pipe({
+		Rx.map(function(result)
+			return result + 1
+		end);
+		Rx.map(function(value)
+			return ("%0.2f"):format(value)
+		end);
+	}):Subscribe(print)
+
+	--> 2.00
+	--> 3.00
+	--> 4.00
+	```
+	@param transformers { (observable: Observable<T>) -> Observable<T> }
+	@return Observable<T>
+]=]
+function Observable:Pipe(transformers)
+	assert(type(transformers) == "table", "Bad transformers")
+
+	local current = self
+	for _, transformer in pairs(transformers) do
+		assert(type(transformer) == "function", "Bad transformer")
+		current = transformer(current)
+		assert(Observable.isObservable(current))
+	end
+
+	return current
+end
+
+--[=[
+	Subscribes immediately, fireCallback may return a maid (or a task a maid can handle)
+	to clean up
+
+	@param fireCallback function?
+	@param failCallback function?
+	@param completeCallback function?
+	@return MaidTask
+]=]
+function Observable:Subscribe(fireCallback, failCallback, completeCallback)
+	local sub = Subscription.new(fireCallback, failCallback, completeCallback)
+	local cleanup = self._onSubscribe(sub)
+
+	if cleanup then
+		sub:_giveCleanup(cleanup)
+	end
+
+	return sub
+end
+
+return Observable  -  Editar
+  04:54:13.790    -  Editar
+  04:54:13.790  ----- [2419] ServerScriptService.Scripts.Core.SoftShutdown.src.node_modules.@quenty.attributeutils.node_modules.@quenty.rx.Shared.ObservableSubscriptionTable -----  -  Editar
+  04:54:13.790  --[=[
+	This allows the storage of subscriptions for keys, such that something
+	can subscribe onto a key, and events can be invoked onto keys.
+	@class ObservableSubscriptionTable
+]=]
+
+local require = require(script.Parent.loader).load(script)
+
+local Observable = require("Observable")
+
+local ObservableSubscriptionTable = {}
+ObservableSubscriptionTable.ClassName = "ObservableSubscriptionTable"
+ObservableSubscriptionTable.__index = ObservableSubscriptionTable
+
+function ObservableSubscriptionTable.new()
+	local self = setmetatable({}, ObservableSubscriptionTable)
+
+	self._subMap = {} -- { TKey: Subscription<TEmit> }
+
+	return self
+end
+
+--[=[
+	Fires for the current key the given value
+	@param key TKey
+	@param ... TEmit
+]=]
+function ObservableSubscriptionTable:Fire(key, ...)
+	assert(key ~= nil, "Bad key")
+
+	local subs = self._subMap[key]
+	if not subs then
+		return
+	end
+
+	-- Make a copy so we don't have to worry about our last changing
+	for _, sub in pairs(table.clone(subs)) do
+		task.spawn(sub.Fire, sub, ...)
+	end
+end
+
+function ObservableSubscriptionTable:Complete(key, ...)
+	local subs = self._subMap[key]
+	if not subs then
+		return
+	end
+
+	local subsToComplete = table.clone(subs)
+	self._subMap[key] = nil
+
+	for _, sub in pairs(subsToComplete) do
+		task.spawn(sub.Complete, sub, ...)
+	end
+end
+
+--[=[
+	Observes for the key
+	@param key TKey
+	@return Observable<TEmit>
+]=]
+function ObservableSubscriptionTable:Observe(key)
+	assert(key ~= nil, "Bad key")
+
+	return Observable.new(function(sub)
+		if not self._subMap[key] then
+			self._subMap[key] = { sub }
+		else
+			table.insert(self._subMap[key], sub)
+		end
+
+		return function()
+			if not self._subMap[key] then
+				return
+			end
+
+			local current = self._subMap[key]
+			local index = table.find(current, sub)
+			if not index then
+				return
+			end
+
+			table.remove(current, index)
+			if #current == 0 then
+				self._subMap[key] = nil
+			end
+
+			-- Complete the subscription
+			if sub:IsPending() then
+				task.spawn(function()
+					sub:Complete()
+				end)
+			end
+		end
+	end)
+end
+
+--[=[
+	Completes all subscriptions and removes them from the list.
+]=]
+function ObservableSubscriptionTable:Destroy()
+	while next(self._subMap) do
+		local key, list = next(self._subMap)
+		self._subMap[key] = nil
+
+		for _, sub in pairs(list) do
+			if sub:IsPending() then
+				task.spawn(function()
+					sub:Complete()
+				end)
+			end
+		end
+	end
+end
